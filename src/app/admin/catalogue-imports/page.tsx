@@ -301,7 +301,14 @@ export default function AdminCatalogueImportsPage() {
       setNotes("");
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Upload failed");
+      const message = err instanceof Error ? err.message : "Upload failed";
+      if (message === "Failed to fetch" || message.includes("NetworkError")) {
+        setError(
+          "Upload timed out or lost connection. Large files can take up to a minute — try again, or uncheck “Activate immediately” to split the work."
+        );
+      } else {
+        setError(message);
+      }
     } finally {
       setUploading(false);
     }
@@ -447,6 +454,12 @@ export default function AdminCatalogueImportsPage() {
               </label>
 
               {previewing && <p className="text-sm text-ink-secondary">Reading CSV…</p>}
+              {uploading && preview && (
+                <p className="text-sm text-ink-secondary">
+                  Uploading {preview.parse.rowsParsed.toLocaleString()} rows — large files may take up to a
+                  minute. Please keep this tab open.
+                </p>
+              )}
               {preview && !previewing ? <ImportPreviewPanel preview={preview} /> : null}
 
               <div>
@@ -454,7 +467,11 @@ export default function AdminCatalogueImportsPage() {
                   type="submit"
                   disabled={uploading || previewing || !file || (preview != null && !preview.canImport)}
                 >
-                  {uploading ? "Uploading…" : "Upload import version"}
+                  {uploading
+                    ? preview
+                      ? `Uploading ${preview.parse.rowsParsed.toLocaleString()} rows…`
+                      : "Uploading…"
+                    : "Upload import version"}
                 </Button>
               </div>
             </form>

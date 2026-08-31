@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { importCatalogueCsv, activateImportBatch } from "@/lib/db/catalogue-imports";
 
+export const maxDuration = 300;
+export const dynamic = "force-dynamic";
+
 export async function POST(request: Request) {
   try {
     const form = await request.formData();

@@ -58,6 +58,30 @@ export async function queryOne(
   return rows[0] ?? null;
 }
 
+/** Multi-row INSERT in chunks (avoids thousands of round-trips for large CSV imports). */
+export async function insertMany(
+  table: string,
+  columns: readonly string[],
+  rows: unknown[][],
+  chunkSize = 250
+): Promise<void> {
+  if (rows.length === 0) return;
+
+  const colList = columns.join(", ");
+  for (let i = 0; i < rows.length; i += chunkSize) {
+    const chunk = rows.slice(i, i + chunkSize);
+    let paramIndex = 1;
+    const valueGroups = chunk.map((row) => {
+      const placeholders = row.map(() => `$${paramIndex++}`).join(", ");
+      return `(${placeholders})`;
+    });
+    await runQuery(
+      `INSERT INTO ${table} (${colList}) VALUES ${valueGroups.join(", ")}`,
+      chunk.flat()
+    );
+  }
+}
+
 export async function withTransaction<T>(fn: () => Promise<T>): Promise<T> {
   if (queryOverride) {
     return txContext.run(queryOverride, fn);

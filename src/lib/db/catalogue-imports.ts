@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from "uuid";
-import { ensureDb, query, queryOne, withTransaction } from "@/lib/db/client";
+import { ensureDb, insertMany, query, queryOne, withTransaction } from "@/lib/db/client";
 import { parseCatalogueCsv, extractMappedFieldsFromRaw } from "@/lib/catalogue/csv-parser";
 import type {
   ActiveTenciaImportMatch,
@@ -156,33 +156,42 @@ export async function importCatalogueCsv(
       ]
     );
 
-    for (const row of parsed.rows) {
+    const importRowColumns = [
+      "id",
+      "batch_id",
+      "cowag_code",
+      "supplier",
+      "supplier_part_number",
+      "description",
+      "unit",
+      "cost_each",
+      "sell_price",
+      "raw_json",
+      "search_text",
+    ] as const;
+
+    const importRows = parsed.rows.map((row) => {
       const searchText = [row.cowagCode, row.supplier, row.supplierPartNumber, row.description, row.unit]
         .filter(Boolean)
         .join(" ")
         .toLowerCase();
 
-      await query(
-        `
-        INSERT INTO catalogue_import_rows
-          (id, batch_id, cowag_code, supplier, supplier_part_number, description, unit, cost_each, sell_price, raw_json, search_text)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-      `,
-        [
-          uuidv4(),
-          batchId,
-          row.cowagCode,
-          row.supplier,
-          row.supplierPartNumber,
-          row.description,
-          row.unit,
-          row.costEach,
-          row.sellPrice,
-          JSON.stringify(row.raw),
-          searchText,
-        ]
-      );
-    }
+      return [
+        uuidv4(),
+        batchId,
+        row.cowagCode,
+        row.supplier,
+        row.supplierPartNumber,
+        row.description,
+        row.unit,
+        row.costEach,
+        row.sellPrice,
+        JSON.stringify(row.raw),
+        searchText,
+      ];
+    });
+
+    await insertMany("catalogue_import_rows", importRowColumns, importRows);
   });
 
   return (await getImportBatch(batchId))!;
