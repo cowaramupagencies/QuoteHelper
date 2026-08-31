@@ -5,7 +5,7 @@ import { v4 as uuidv4 } from "uuid";
 import type { Quote } from "@/types";
 
 export async function GET() {
-  return NextResponse.json(listQuotes(50));
+  return NextResponse.json(await listQuotes(50));
 }
 
 export async function POST(request: Request) {
@@ -13,7 +13,7 @@ export async function POST(request: Request) {
   const now = new Date().toISOString();
   const quote: Quote = {
     id: uuidv4(),
-    quoteNumber: body.quoteNumber || generateQuoteNumber(),
+    quoteNumber: body.quoteNumber || (await generateQuoteNumber()),
     quoteDate: body.quoteDate || now.slice(0, 10),
     status: "draft",
     templateId: body.templateId,
@@ -26,18 +26,18 @@ export async function POST(request: Request) {
     createdAt: now,
     updatedAt: now,
   };
-  return NextResponse.json(saveQuote(quote), { status: 201 });
+  return NextResponse.json(await saveQuote(quote), { status: 201 });
 }
 
 export async function PUT(request: Request) {
   const quote = (await request.json()) as Quote;
-  return NextResponse.json(saveQuote(quote));
+  return NextResponse.json(await saveQuote(quote));
 }
 
 export async function DELETE(request: Request) {
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");
   if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
-  deleteQuote(id);
+  await deleteQuote(id);
   return NextResponse.json({ ok: true });
 }

@@ -17,7 +17,7 @@ export async function POST(request: Request) {
     }
 
     const csvText = await file.text();
-    const batch = importCatalogueCsv({
+    const batch = await importCatalogueCsv({
       categoryId,
       originalFilename: file.name,
       csvText,
@@ -25,7 +25,7 @@ export async function POST(request: Request) {
     });
 
     if (activate && batch.status === "imported") {
-      const activated = activateImportBatch(batch.id);
+      const activated = await activateImportBatch(batch.id);
       return NextResponse.json(activated, { status: 201 });
     }
 

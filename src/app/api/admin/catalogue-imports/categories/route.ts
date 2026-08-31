@@ -9,11 +9,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "name is required" }, { status: 400 });
     }
 
-    const category = createCatalogueCategory(name);
+    const category = await createCatalogueCategory(name);
     return NextResponse.json(
       {
         category,
-        overview: getAdminCatalogueImportsOverview(),
+        overview: await getAdminCatalogueImportsOverview(),
       },
       { status: 201 }
     );

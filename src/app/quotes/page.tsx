@@ -7,8 +7,8 @@ import { PageHeader } from "@/components/ui/PageHeader";
 
 export const dynamic = "force-dynamic";
 
-export default function QuotesPage() {
-  const quotes = listQuotes(50);
+export default async function QuotesPage() {
+  const quotes = await listQuotes(50);
 
   return (
     <div className="space-y-8">

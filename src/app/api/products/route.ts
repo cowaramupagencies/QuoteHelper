@@ -8,15 +8,15 @@ export async function GET(request: Request) {
 
   if (q) {
     const mode = searchParams.get("mode") === "code" ? "code" : "all";
-    return NextResponse.json(searchProducts(q, limit, mode));
+    return NextResponse.json(await searchProducts(q, limit, mode));
   }
   const offset = parseInt(searchParams.get("offset") || "0", 10);
-  return NextResponse.json(listProducts(limit, offset));
+  return NextResponse.json(await listProducts(limit, offset));
 }
 
 export async function POST(request: Request) {
   const body = await request.json();
-  const product = saveProduct({
+  const product = await saveProduct({
     type: body.type || "supplier",
     cowagCode: body.cowagCode,
     supplier: body.supplier,

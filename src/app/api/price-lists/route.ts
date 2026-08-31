@@ -41,7 +41,7 @@ function parsePdfToSeed() {
 }
 
 export async function GET() {
-  const meta = getPriceListMeta();
+  const meta = await getPriceListMeta();
   return NextResponse.json({
     meta: meta
       ? {
@@ -50,7 +50,7 @@ export async function GET() {
           productCount: meta.product_count,
         }
       : null,
-    currentCount: countProducts(),
+    currentCount: await countProducts(),
   });
 }
 
@@ -63,8 +63,8 @@ export async function POST(request: Request) {
       if (!items?.length) {
         return NextResponse.json({ error: "No products parsed from PDF" }, { status: 500 });
       }
-      clearProducts();
-      const summary = importCowagProducts(items, SOURCE_FILE);
+      await clearProducts();
+      const summary = await importCowagProducts(items, SOURCE_FILE);
       return NextResponse.json({ ...summary, productCount: items.length });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Import failed";
@@ -73,8 +73,8 @@ export async function POST(request: Request) {
   }
 
   if (body.action === "import" && body.items) {
-    clearProducts();
-    const summary = importCowagProducts(body.items, body.sourceFile || "Imported price list");
+    await clearProducts();
+    const summary = await importCowagProducts(body.items, body.sourceFile || "Imported price list");
     return NextResponse.json(summary);
   }
 

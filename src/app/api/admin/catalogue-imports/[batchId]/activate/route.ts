@@ -7,7 +7,7 @@ export async function POST(
 ) {
   try {
     const { batchId } = await params;
-    const batch = activateImportBatch(batchId);
+    const batch = await activateImportBatch(batchId);
     return NextResponse.json(batch);
   } catch (error) {
     return NextResponse.json(

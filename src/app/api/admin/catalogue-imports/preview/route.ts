@@ -28,7 +28,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "CSV file or csvText is required" }, { status: 400 });
     }
 
-    const preview = previewCatalogueImport({ categoryId, originalFilename, csvText });
+    const preview = await previewCatalogueImport({ categoryId, originalFilename, csvText });
     return NextResponse.json(preview);
   } catch (error) {
     return NextResponse.json(

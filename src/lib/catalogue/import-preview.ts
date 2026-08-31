@@ -5,7 +5,6 @@ import {
   listCatalogueCategories,
 } from "@/lib/db/catalogue-imports";
 import type { CatalogueImportPreview } from "@/types/catalogue-imports";
-import type Database from "better-sqlite3";
 
 function rowKey(row: {
   cowagCode: string | null;
@@ -33,19 +32,20 @@ function indexRows<T extends { cowagCode: string | null; supplierPartNumber: str
   return map;
 }
 
-export function previewCatalogueImport(
-  input: { categoryId: string; originalFilename: string; csvText: string },
-  database?: Database.Database
-): CatalogueImportPreview {
-  const categories = listCatalogueCategories(database);
+export async function previewCatalogueImport(input: {
+  categoryId: string;
+  originalFilename: string;
+  csvText: string;
+}): Promise<CatalogueImportPreview> {
+  const categories = await listCatalogueCategories();
   const category = categories.find((c) => c.id === input.categoryId);
   if (!category) {
     throw new Error(`Unknown category: ${input.categoryId}`);
   }
 
   const parsed = parseCatalogueCsv(input.csvText);
-  const activeBatch = category.activeBatchId ? getImportBatch(category.activeBatchId, database) : null;
-  const activeRows = getActiveRowsForCategory(input.categoryId, database);
+  const activeBatch = category.activeBatchId ? await getImportBatch(category.activeBatchId) : null;
+  const activeRows = await getActiveRowsForCategory(input.categoryId);
   const activeByKey = indexRows(activeRows);
   const incomingByKey = indexRows(parsed.rows);
 

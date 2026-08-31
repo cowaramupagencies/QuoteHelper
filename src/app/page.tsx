@@ -7,9 +7,9 @@ import { PageHeader } from "@/components/ui/PageHeader";
 
 export const dynamic = "force-dynamic";
 
-export default function DashboardPage() {
-  const quotes = listQuotes(10);
-  const productCount = countProducts();
+export default async function DashboardPage() {
+  const quotes = await listQuotes(10);
+  const productCount = await countProducts();
   const draftCount = quotes.filter((q) => q.status === "draft").length;
 
   return (

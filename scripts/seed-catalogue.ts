@@ -33,8 +33,8 @@ async function main() {
   }>;
 
   console.log(`Importing ${items.length} products…`);
-  clearProducts();
-  const summary = importCowagProducts(items, SOURCE_FILE);
+  await clearProducts();
+  const summary = await importCowagProducts(items, SOURCE_FILE);
   console.log("Import complete:", summary);
 }
 

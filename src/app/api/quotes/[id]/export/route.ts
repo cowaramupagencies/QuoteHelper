@@ -4,7 +4,7 @@ import { generateQuoteWorkbook } from "@/lib/excel/generate-workbook";
 
 export async function GET(_: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const quote = getQuote(id);
+  const quote = await getQuote(id);
   if (!quote) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const buffer = await generateQuoteWorkbook(quote);

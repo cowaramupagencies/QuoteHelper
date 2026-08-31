@@ -1,5 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import Database from "better-sqlite3";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   activateImportBatch,
   createCatalogueCategory,
@@ -9,10 +8,11 @@ import {
   getImportBatch,
   importCatalogueCsv,
   listImportBatchesForCategory,
-  migrateCatalogueImports,
 } from "@/lib/db/catalogue-imports";
+import { query, queryOne } from "@/lib/db/client";
 import { parseCatalogueCsv, extractMappedFieldsFromRaw } from "@/lib/catalogue/csv-parser";
 import { previewCatalogueImport } from "@/lib/catalogue/import-preview";
+import { setupTestDb, teardownTestDb } from "./test-db";
 
 const PUMPS_CSV_V1 = `Code,Description,Last Cost,Unit
 PUMP-001,Test Pump,100.00,EACH
@@ -23,19 +23,6 @@ PUMP-001,Test Pump,150.00,EACH`;
 
 const TANKS_CSV = `Code,Description,Last Cost,Unit
 TANK-100,Round Tank,5000.00,EACH`;
-
-function createMemoryDb() {
-  const db = new Database(":memory:");
-  db.pragma("foreign_keys = ON");
-  migrateCatalogueImports(db);
-  db.exec(`
-    CREATE TABLE quotes (
-      id TEXT PRIMARY KEY,
-      options_json TEXT NOT NULL
-    )
-  `);
-  return db;
-}
 
 describe("parseCatalogueCsv", () => {
   it("detects common code and cost headers", () => {
@@ -74,6 +61,7 @@ PUMP-001,Test Pump,123.45,VINIDE,GRU-12345`;
     expect(parsed.rows[0].supplier).toBe("VINIDE");
     expect(parsed.rows[0].supplierPartNumber).toBe("GRU-12345");
   });
+
   it("re-resolves swapped supplier fields from saved raw_json", () => {
     const mapped = extractMappedFieldsFromRaw({
       Code: "PUMP-001",
@@ -88,92 +76,103 @@ PUMP-001,Test Pump,123.45,VINIDE,GRU-12345`;
 });
 
 describe("catalogue import versioning", () => {
-  let db: Database.Database;
-
-  beforeEach(() => {
-    db = createMemoryDb();
+  beforeEach(async () => {
+    await setupTestDb();
   });
 
-  it("keeps multiple import versions for the same category", () => {
-    importCatalogueCsv(
-      { categoryId: "pumps", originalFilename: "pumps-v1.csv", csvText: PUMPS_CSV_V1 },
-      db
-    );
-    importCatalogueCsv(
-      { categoryId: "pumps", originalFilename: "pumps-v2.csv", csvText: PUMPS_CSV_V2 },
-      db
-    );
+  afterEach(async () => {
+    await teardownTestDb();
+  });
 
-    const batches = listImportBatchesForCategory("pumps", db);
+  it("keeps multiple import versions for the same category", async () => {
+    await importCatalogueCsv({
+      categoryId: "pumps",
+      originalFilename: "pumps-v1.csv",
+      csvText: PUMPS_CSV_V1,
+    });
+    await importCatalogueCsv({
+      categoryId: "pumps",
+      originalFilename: "pumps-v2.csv",
+      csvText: PUMPS_CSV_V2,
+    });
+
+    const batches = await listImportBatchesForCategory("pumps");
     expect(batches).toHaveLength(2);
     expect(batches.every((b) => b.status === "imported")).toBe(true);
     expect(new Set(batches.map((b) => b.id)).size).toBe(2);
   });
 
-  it("activates a newer version without deleting older imports", () => {
-    const v1 = importCatalogueCsv(
-      { categoryId: "pumps", originalFilename: "pumps-v1.csv", csvText: PUMPS_CSV_V1 },
-      db
-    );
-    const v2 = importCatalogueCsv(
-      { categoryId: "pumps", originalFilename: "pumps-v2.csv", csvText: PUMPS_CSV_V2 },
-      db
-    );
+  it("activates a newer version without deleting older imports", async () => {
+    const v1 = await importCatalogueCsv({
+      categoryId: "pumps",
+      originalFilename: "pumps-v1.csv",
+      csvText: PUMPS_CSV_V1,
+    });
+    const v2 = await importCatalogueCsv({
+      categoryId: "pumps",
+      originalFilename: "pumps-v2.csv",
+      csvText: PUMPS_CSV_V2,
+    });
 
-    activateImportBatch(v1.id, db);
-    activateImportBatch(v2.id, db);
+    await activateImportBatch(v1.id);
+    await activateImportBatch(v2.id);
 
-    expect(getImportBatch(v1.id, db)?.status).toBe("superseded");
-    expect(getImportBatch(v2.id, db)?.status).toBe("active");
-    expect(getActiveTenciaCostForCode("PUMP-001", db)).toBe(150);
-    expect(listImportBatchesForCategory("pumps", db)).toHaveLength(2);
+    expect((await getImportBatch(v1.id))?.status).toBe("superseded");
+    expect((await getImportBatch(v2.id))?.status).toBe("active");
+    expect(await getActiveTenciaCostForCode("PUMP-001")).toBe(150);
+    expect((await listImportBatchesForCategory("pumps"))).toHaveLength(2);
   });
 
-  it("does not change active data for another category", () => {
-    const pumps = importCatalogueCsv(
-      { categoryId: "pumps", originalFilename: "pumps-v1.csv", csvText: PUMPS_CSV_V1 },
-      db
-    );
-    const tanks = importCatalogueCsv(
-      { categoryId: "tanks", originalFilename: "tanks-v1.csv", csvText: TANKS_CSV },
-      db
-    );
+  it("does not change active data for another category", async () => {
+    const pumps = await importCatalogueCsv({
+      categoryId: "pumps",
+      originalFilename: "pumps-v1.csv",
+      csvText: PUMPS_CSV_V1,
+    });
+    const tanks = await importCatalogueCsv({
+      categoryId: "tanks",
+      originalFilename: "tanks-v1.csv",
+      csvText: TANKS_CSV,
+    });
 
-    activateImportBatch(pumps.id, db);
-    activateImportBatch(tanks.id, db);
+    await activateImportBatch(pumps.id);
+    await activateImportBatch(tanks.id);
 
-    const pumpsV2 = importCatalogueCsv(
-      { categoryId: "pumps", originalFilename: "pumps-v2.csv", csvText: PUMPS_CSV_V2 },
-      db
-    );
-    activateImportBatch(pumpsV2.id, db);
+    const pumpsV2 = await importCatalogueCsv({
+      categoryId: "pumps",
+      originalFilename: "pumps-v2.csv",
+      csvText: PUMPS_CSV_V2,
+    });
+    await activateImportBatch(pumpsV2.id);
 
-    expect(getActiveTenciaCostForCode("PUMP-001", db)).toBe(150);
-    expect(getActiveTenciaCostForCode("TANK-100", db)).toBe(5000);
-    expect(getActiveRowsForCategory("tanks", db)).toHaveLength(1);
-    expect(getImportBatch(tanks.id, db)?.status).toBe("active");
+    expect(await getActiveTenciaCostForCode("PUMP-001")).toBe(150);
+    expect(await getActiveTenciaCostForCode("TANK-100")).toBe(5000);
+    expect((await getActiveRowsForCategory("tanks"))).toHaveLength(1);
+    expect((await getImportBatch(tanks.id))?.status).toBe("active");
   });
 
-  it("can reactivate an older version", () => {
-    const v1 = importCatalogueCsv(
-      { categoryId: "pumps", originalFilename: "pumps-v1.csv", csvText: PUMPS_CSV_V1 },
-      db
-    );
-    const v2 = importCatalogueCsv(
-      { categoryId: "pumps", originalFilename: "pumps-v2.csv", csvText: PUMPS_CSV_V2 },
-      db
-    );
+  it("can reactivate an older version", async () => {
+    const v1 = await importCatalogueCsv({
+      categoryId: "pumps",
+      originalFilename: "pumps-v1.csv",
+      csvText: PUMPS_CSV_V1,
+    });
+    const v2 = await importCatalogueCsv({
+      categoryId: "pumps",
+      originalFilename: "pumps-v2.csv",
+      csvText: PUMPS_CSV_V2,
+    });
 
-    activateImportBatch(v2.id, db);
-    expect(getActiveTenciaCostForCode("PUMP-001", db)).toBe(150);
+    await activateImportBatch(v2.id);
+    expect(await getActiveTenciaCostForCode("PUMP-001")).toBe(150);
 
-    activateImportBatch(v1.id, db);
-    expect(getImportBatch(v1.id, db)?.status).toBe("active");
-    expect(getImportBatch(v2.id, db)?.status).toBe("superseded");
-    expect(getActiveTenciaCostForCode("PUMP-001", db)).toBe(100);
+    await activateImportBatch(v1.id);
+    expect((await getImportBatch(v1.id))?.status).toBe("active");
+    expect((await getImportBatch(v2.id))?.status).toBe("superseded");
+    expect(await getActiveTenciaCostForCode("PUMP-001")).toBe(100);
   });
 
-  it("does not rewrite saved quote BOM snapshots when active version changes", () => {
+  it("does not rewrite saved quote BOM snapshots when active version changes", async () => {
     const options = [
       {
         id: "opt1",
@@ -202,60 +201,76 @@ describe("catalogue import versioning", () => {
       },
     ];
     const originalJson = JSON.stringify(options);
-    db.prepare("INSERT INTO quotes (id, options_json) VALUES (?, ?)").run("quote-1", originalJson);
-
-    const batch = importCatalogueCsv(
-      { categoryId: "pumps", originalFilename: "pumps-v2.csv", csvText: PUMPS_CSV_V2 },
-      db
+    await query(
+      `INSERT INTO quotes (
+        id, quote_number, quote_date, status, customer_json, delivery_json,
+        scope_text, options_json, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [
+        "quote-1",
+        "114700",
+        "2026-08-31",
+        "draft",
+        "{}",
+        "{}",
+        "",
+        originalJson,
+        new Date().toISOString(),
+        new Date().toISOString(),
+      ]
     );
-    activateImportBatch(batch.id, db);
 
-    const row = db.prepare("SELECT options_json FROM quotes WHERE id = ?").get("quote-1") as {
-      options_json: string;
-    };
-    expect(row.options_json).toBe(originalJson);
-    expect(getActiveTenciaCostForCode("PUMP-001", db)).toBe(150);
+    const batch = await importCatalogueCsv({
+      categoryId: "pumps",
+      originalFilename: "pumps-v2.csv",
+      csvText: PUMPS_CSV_V2,
+    });
+    await activateImportBatch(batch.id);
+
+    const row = await queryOne("SELECT options_json FROM quotes WHERE id = $1", ["quote-1"]);
+    expect(row?.options_json).toBe(originalJson);
+    expect(await getActiveTenciaCostForCode("PUMP-001")).toBe(150);
   });
 
-  it("switches active version atomically via a single category pointer", () => {
-    const v1 = importCatalogueCsv(
-      { categoryId: "pumps", originalFilename: "pumps-v1.csv", csvText: PUMPS_CSV_V1 },
-      db
-    );
-    const v2 = importCatalogueCsv(
-      { categoryId: "pumps", originalFilename: "pumps-v2.csv", csvText: PUMPS_CSV_V2 },
-      db
-    );
+  it("switches active version atomically via a single category pointer", async () => {
+    const v1 = await importCatalogueCsv({
+      categoryId: "pumps",
+      originalFilename: "pumps-v1.csv",
+      csvText: PUMPS_CSV_V1,
+    });
+    const v2 = await importCatalogueCsv({
+      categoryId: "pumps",
+      originalFilename: "pumps-v2.csv",
+      csvText: PUMPS_CSV_V2,
+    });
 
-    activateImportBatch(v1.id, db);
-    activateImportBatch(v2.id, db);
+    await activateImportBatch(v1.id);
+    await activateImportBatch(v2.id);
 
-    const activeRows = db
-      .prepare(
-        `
-        SELECT COUNT(*) as c
-        FROM catalogue_category_active a
-        JOIN catalogue_import_batches b ON b.id = a.batch_id
-        WHERE a.category_id = 'pumps' AND b.status = 'active'
-      `
-      )
-      .get() as { c: number };
+    const activeRows = await queryOne(`
+      SELECT COUNT(*)::int AS c
+      FROM catalogue_category_active a
+      JOIN catalogue_import_batches b ON b.id = a.batch_id
+      WHERE a.category_id = 'pumps' AND b.status = 'active'
+    `);
 
-    expect(activeRows.c).toBe(1);
-    expect(getActiveTenciaCostForCode("PUMP-001", db)).toBe(150);
+    expect(activeRows?.c).toBe(1);
+    expect(await getActiveTenciaCostForCode("PUMP-001")).toBe(150);
   });
 
-  it("previews changes against the active version before import", () => {
-    const v1 = importCatalogueCsv(
-      { categoryId: "pumps", originalFilename: "pumps-v1.csv", csvText: PUMPS_CSV_V1 },
-      db
-    );
-    activateImportBatch(v1.id, db);
+  it("previews changes against the active version before import", async () => {
+    const v1 = await importCatalogueCsv({
+      categoryId: "pumps",
+      originalFilename: "pumps-v1.csv",
+      csvText: PUMPS_CSV_V1,
+    });
+    await activateImportBatch(v1.id);
 
-    const preview = previewCatalogueImport(
-      { categoryId: "pumps", originalFilename: "pumps-v2.csv", csvText: PUMPS_CSV_V2 },
-      db
-    );
+    const preview = await previewCatalogueImport({
+      categoryId: "pumps",
+      originalFilename: "pumps-v2.csv",
+      csvText: PUMPS_CSV_V2,
+    });
 
     expect(preview.canImport).toBe(true);
     expect(preview.changes.newCount).toBe(0);
@@ -264,71 +279,74 @@ describe("catalogue import versioning", () => {
     expect(preview.changes.costChanges[0]?.code).toBe("PUMP-001");
   });
 
-  it("can create a new category", () => {
-    const category = createCatalogueCategory("Solar pumps", db);
+  it("can create a new category", async () => {
+    const category = await createCatalogueCategory("Solar pumps");
     expect(category.id).toBe("solar-pumps");
     expect(category.name).toBe("Solar pumps");
   });
 
-  it("stores supplier fields from Tencia CSV imports", () => {
+  it("stores supplier fields from Tencia CSV imports", async () => {
     const csv = `Code,Description,Sum of LAST_COST,SUPPLIER PT NO,Supplier_stock
 PUMP-001,Test Pump,123.45,VINIDE,GRU-12345`;
 
-    const batch = importCatalogueCsv(
-      { categoryId: "pumps", originalFilename: "pumps-tencia.csv", csvText: csv },
-      db
-    );
-    activateImportBatch(batch.id, db);
+    const batch = await importCatalogueCsv({
+      categoryId: "pumps",
+      originalFilename: "pumps-tencia.csv",
+      csvText: csv,
+    });
+    await activateImportBatch(batch.id);
 
-    const rows = getActiveRowsForCategory("pumps", db);
+    const rows = await getActiveRowsForCategory("pumps");
     expect(rows[0].costEach).toBe(123.45);
     expect(rows[0].supplier).toBe("VINIDE");
     expect(rows[0].supplierPartNumber).toBe("GRU-12345");
 
-    const match = getActiveTenciaImportMatch("PUMP-001", null, db);
+    const match = await getActiveTenciaImportMatch("PUMP-001", null);
     expect(match?.costEach).toBe(123.45);
     expect(match?.supplier).toBe("VINIDE");
     expect(match?.supplierPartNumber).toBe("GRU-12345");
   });
 
-  it("re-resolves supplier fields from raw_json when older imports stored them swapped", () => {
+  it("re-resolves supplier fields from raw_json when older imports stored them swapped", async () => {
     const batchId = "batch-swapped";
-    db.prepare(
+    await query(
       `
       INSERT INTO catalogue_import_batches
         (id, category_id, original_filename, imported_at, row_count, notes, status, summary_json)
-      VALUES (?, 'pumps', 'old.csv', ?, 1, NULL, 'imported', '{}')
-    `
-    ).run(batchId, new Date().toISOString());
+      VALUES ($1, 'pumps', 'old.csv', $2, 1, NULL, 'imported', '{}')
+    `,
+      [batchId, new Date().toISOString()]
+    );
 
-    db.prepare(
+    await query(
       `
       INSERT INTO catalogue_import_rows
         (id, batch_id, cowag_code, supplier, supplier_part_number, description, unit, cost_each, sell_price, raw_json, search_text)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `
-    ).run(
-      "row-1",
-      batchId,
-      "PUMP-001",
-      null,
-      "VINIDE",
-      "Test Pump",
-      "EACH",
-      123.45,
-      null,
-      JSON.stringify({
-        Code: "PUMP-001",
-        Description: "Test Pump",
-        "Sum of LAST_COST": "123.45",
-        "Supplier Code": "VINIDE",
-        Supplier_stock: "GRU-12345",
-      }),
-      "pump-001 vinide"
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+    `,
+      [
+        "row-1",
+        batchId,
+        "PUMP-001",
+        null,
+        "VINIDE",
+        "Test Pump",
+        "EACH",
+        123.45,
+        null,
+        JSON.stringify({
+          Code: "PUMP-001",
+          Description: "Test Pump",
+          "Sum of LAST_COST": "123.45",
+          "Supplier Code": "VINIDE",
+          Supplier_stock: "GRU-12345",
+        }),
+        "pump-001 vinide",
+      ]
     );
 
-    activateImportBatch(batchId, db);
-    const match = getActiveTenciaImportMatch("PUMP-001", null, db);
+    await activateImportBatch(batchId);
+    const match = await getActiveTenciaImportMatch("PUMP-001", null);
     expect(match?.supplier).toBe("VINIDE");
     expect(match?.supplierPartNumber).toBe("GRU-12345");
   });

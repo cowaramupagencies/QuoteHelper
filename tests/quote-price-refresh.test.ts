@@ -82,16 +82,16 @@ function sampleQuote(items: BomItem[]): Quote {
 describe("quote price refresh", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockGetProduct.mockReturnValue(null);
+    mockGetProduct.mockResolvedValue(null);
     mockGetProductByCowagCode.mockImplementation((code: string) =>
-      code === "PUMP-001" ? sampleProduct() : null
+      Promise.resolve(code === "PUMP-001" ? sampleProduct() : null)
     );
-    mockGetProductBySupplierPartNumber.mockReturnValue(null);
-    mockGetActiveTenciaImportMatch.mockReturnValue(null);
+    mockGetProductBySupplierPartNumber.mockResolvedValue(null);
+    mockGetActiveTenciaImportMatch.mockResolvedValue(null);
   });
 
-  it("detects cost and sell changes from the current catalogue", () => {
-    const preview = previewQuotePriceRefresh(sampleQuote([sampleItem()]));
+  it("detects cost and sell changes from the current catalogue", async () => {
+    const preview = await previewQuotePriceRefresh(sampleQuote([sampleItem()]));
     expect(preview.summary.wouldUpdate).toBe(1);
     expect(preview.changes[0].previousCostEach).toBe(100);
     expect(preview.changes[0].newCostEach).toBe(150);
@@ -99,8 +99,8 @@ describe("quote price refresh", () => {
     expect(preview.changes[0].newSellEach).toBe(250);
   });
 
-  it("leaves unchanged items alone", () => {
-    const preview = previewQuotePriceRefresh(
+  it("leaves unchanged items alone", async () => {
+    const preview = await previewQuotePriceRefresh(
       sampleQuote([
         sampleItem({
           costEach: 150,
@@ -112,15 +112,15 @@ describe("quote price refresh", () => {
     expect(preview.summary.unchanged).toBe(1);
   });
 
-  it("applies catalogue updates to the quote", () => {
-    const updated = applyQuotePriceRefresh(sampleQuote([sampleItem()]));
+  it("applies catalogue updates to the quote", async () => {
+    const updated = await applyQuotePriceRefresh(sampleQuote([sampleItem()]));
     const item = updated.options[0].sections[0].items[0];
     expect(item.costEach).toBe(150);
     expect(item.sellEach).toBe(250);
   });
 
-  it("recalculates sell from markup when cost changes", () => {
-    const updated = proposeUpdatedBomItem(
+  it("recalculates sell from markup when cost changes", async () => {
+    const updated = await proposeUpdatedBomItem(
       sampleItem({
         markupPercent: 20,
         sellEach: 120,
@@ -130,25 +130,23 @@ describe("quote price refresh", () => {
     expect(updated?.sellEach).toBe(180);
   });
 
-  it("uses active Tencia cost when product has no stored cost", () => {
-    mockGetProductByCowagCode.mockReturnValue(
-      sampleProduct({ costEach: null, sellPrice: 250 })
-    );
-    mockGetActiveTenciaImportMatch.mockReturnValue({
+  it("uses active Tencia cost when product has no stored cost", async () => {
+    mockGetProductByCowagCode.mockResolvedValue(sampleProduct({ costEach: null, sellPrice: 250 }));
+    mockGetActiveTenciaImportMatch.mockResolvedValue({
       costEach: 140,
       supplier: "Grundfos",
       supplierPartNumber: "GRU-123",
     });
 
-    const updated = proposeUpdatedBomItem(sampleItem());
+    const updated = await proposeUpdatedBomItem(sampleItem());
     expect(updated?.costEach).toBe(140);
     expect(updated?.sellEach).toBe(250);
     expect(updated?.supplier).toBe("Grundfos");
     expect(updated?.supplierPartNumber).toBe("GRU-123");
   });
 
-  it("skips POA lines", () => {
-    const preview = previewQuotePriceRefresh(
+  it("skips POA lines", async () => {
+    const preview = await previewQuotePriceRefresh(
       sampleQuote([
         sampleItem({
           pricingState: "poa",

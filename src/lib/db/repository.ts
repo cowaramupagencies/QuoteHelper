@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from "uuid";
-import { getDb, rebuildProductFts } from "@/lib/db";
+import { ensureDb, query, queryOne, withTransaction } from "@/lib/db/client";
 import { getActiveTenciaImportMatch } from "@/lib/db/catalogue-imports";
 import type { Product, Quote } from "@/types";
 
@@ -21,91 +21,77 @@ function rowToQuote(row: Record<string, unknown>): Quote {
   };
 }
 
-export function listQuotes(limit = 20): Quote[] {
-  const db = getDb();
-  const rows = db
-    .prepare("SELECT * FROM quotes ORDER BY updated_at DESC LIMIT ?")
-    .all(limit);
-  return rows.map((r) => rowToQuote(r as Record<string, unknown>));
+export async function listQuotes(limit = 20): Promise<Quote[]> {
+  await ensureDb();
+  const { rows } = await query("SELECT * FROM quotes ORDER BY updated_at DESC LIMIT $1", [limit]);
+  return rows.map((r) => rowToQuote(r));
 }
 
-export function getQuote(id: string): Quote | null {
-  const db = getDb();
-  const row = db.prepare("SELECT * FROM quotes WHERE id = ?").get(id);
-  if (!row) return null;
-  return rowToQuote(row as Record<string, unknown>);
+export async function getQuote(id: string): Promise<Quote | null> {
+  await ensureDb();
+  const row = await queryOne("SELECT * FROM quotes WHERE id = $1", [id]);
+  return row ? rowToQuote(row) : null;
 }
 
-export function saveQuote(quote: Quote): Quote {
-  const db = getDb();
+export async function saveQuote(quote: Quote): Promise<Quote> {
+  await ensureDb();
   const now = new Date().toISOString();
   const updated = { ...quote, updatedAt: now };
-  db.prepare(`
-    INSERT INTO quotes (id, quote_number, quote_date, status, template_id, template_name, customer_json, delivery_json, scope_text, customer_pricing_mode, options_json, created_at, updated_at)
-    VALUES (@id, @quote_number, @quote_date, @status, @template_id, @template_name, @customer_json, @delivery_json, @scope_text, @customer_pricing_mode, @options_json, @created_at, @updated_at)
+  await query(
+    `
+    INSERT INTO quotes (
+      id, quote_number, quote_date, status, template_id, template_name,
+      customer_json, delivery_json, scope_text, customer_pricing_mode,
+      options_json, created_at, updated_at
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
     ON CONFLICT(id) DO UPDATE SET
-      quote_number = excluded.quote_number,
-      quote_date = excluded.quote_date,
-      status = excluded.status,
-      template_id = excluded.template_id,
-      template_name = excluded.template_name,
-      customer_json = excluded.customer_json,
-      delivery_json = excluded.delivery_json,
-      scope_text = excluded.scope_text,
-      customer_pricing_mode = excluded.customer_pricing_mode,
-      options_json = excluded.options_json,
-      updated_at = excluded.updated_at
-  `).run({
-    id: updated.id,
-    quote_number: updated.quoteNumber,
-    quote_date: updated.quoteDate,
-    status: updated.status,
-    template_id: updated.templateId ?? null,
-    template_name: updated.templateName ?? null,
-    customer_json: JSON.stringify(updated.customer),
-    delivery_json: JSON.stringify(updated.delivery),
-    scope_text: updated.scopeText,
-    customer_pricing_mode: updated.customerPricingMode ?? "itemised",
-    options_json: JSON.stringify(updated.options),
-    created_at: updated.createdAt || now,
-    updated_at: updated.updatedAt,
-  });
+      quote_number = EXCLUDED.quote_number,
+      quote_date = EXCLUDED.quote_date,
+      status = EXCLUDED.status,
+      template_id = EXCLUDED.template_id,
+      template_name = EXCLUDED.template_name,
+      customer_json = EXCLUDED.customer_json,
+      delivery_json = EXCLUDED.delivery_json,
+      scope_text = EXCLUDED.scope_text,
+      customer_pricing_mode = EXCLUDED.customer_pricing_mode,
+      options_json = EXCLUDED.options_json,
+      updated_at = EXCLUDED.updated_at
+  `,
+    [
+      updated.id,
+      updated.quoteNumber,
+      updated.quoteDate,
+      updated.status,
+      updated.templateId ?? null,
+      updated.templateName ?? null,
+      JSON.stringify(updated.customer),
+      JSON.stringify(updated.delivery),
+      updated.scopeText,
+      updated.customerPricingMode ?? "itemised",
+      JSON.stringify(updated.options),
+      updated.createdAt || now,
+      updated.updatedAt,
+    ]
+  );
   return updated;
 }
 
-export function deleteQuote(id: string) {
-  getDb().prepare("DELETE FROM quotes WHERE id = ?").run(id);
+export async function deleteQuote(id: string) {
+  await ensureDb();
+  await query("DELETE FROM quotes WHERE id = $1", [id]);
 }
 
-export function generateQuoteNumber(): string {
-  const db = getDb();
-  const row = db.prepare("SELECT quote_number FROM quotes ORDER BY created_at DESC LIMIT 1").get() as
-    | { quote_number: string }
-    | undefined;
+export async function generateQuoteNumber(): Promise<string> {
+  await ensureDb();
+  const row = await queryOne("SELECT quote_number FROM quotes ORDER BY created_at DESC LIMIT 1");
   if (!row) return "114694";
-  const num = parseInt(row.quote_number.replace(/\D/g, ""), 10);
-  return String(isNaN(num) ? 114694 : num + 1);
+  const num = parseInt(String(row.quote_number).replace(/\D/g, ""), 10);
+  return String(Number.isNaN(num) ? 114694 : num + 1);
 }
 
-function rowToProduct(row: Record<string, unknown>): Product {
-  const product: Product = {
-    id: row.id as string,
-    type: row.type as Product["type"],
-    cowagCode: (row.cowag_code as string) || undefined,
-    supplier: (row.supplier as string) || undefined,
-    supplierPartNumber: (row.supplier_part_number as string) || undefined,
-    description: row.description as string,
-    unit: row.unit as string,
-    sellPrice: row.sell_price as number | null,
-    costEach: row.cost_each as number | null,
-    source: (row.source as string) || undefined,
-    lastUpdated: row.last_updated as string,
-  };
-  return enrichProductWithActiveTenciaImport(product);
-}
-
-function enrichProductWithActiveTenciaImport(product: Product): Product {
-  const tencia = getActiveTenciaImportMatch(product.cowagCode, product.supplierPartNumber);
+async function enrichProductWithActiveTenciaImport(product: Product): Promise<Product> {
+  const tencia = await getActiveTenciaImportMatch(product.cowagCode, product.supplierPartNumber);
   if (!tencia) return product;
 
   const next: Product = { ...product };
@@ -132,45 +118,68 @@ function enrichProductWithActiveTenciaImport(product: Product): Product {
   };
 }
 
-export function getProduct(id: string): Product | null {
-  const row = getDb().prepare("SELECT * FROM products WHERE id = ?").get(id);
-  return row ? rowToProduct(row as Record<string, unknown>) : null;
+function rowToProduct(row: Record<string, unknown>): Product {
+  return {
+    id: row.id as string,
+    type: row.type as Product["type"],
+    cowagCode: (row.cowag_code as string) || undefined,
+    supplier: (row.supplier as string) || undefined,
+    supplierPartNumber: (row.supplier_part_number as string) || undefined,
+    description: row.description as string,
+    unit: row.unit as string,
+    sellPrice: row.sell_price as number | null,
+    costEach: row.cost_each as number | null,
+    source: (row.source as string) || undefined,
+    lastUpdated: row.last_updated as string,
+  };
 }
 
-export function getProductByCowagCode(code: string): Product | null {
+async function rowToProductEnriched(row: Record<string, unknown>): Promise<Product> {
+  return enrichProductWithActiveTenciaImport(rowToProduct(row));
+}
+
+export async function getProduct(id: string): Promise<Product | null> {
+  await ensureDb();
+  const row = await queryOne("SELECT * FROM products WHERE id = $1", [id]);
+  return row ? rowToProductEnriched(row) : null;
+}
+
+export async function getProductByCowagCode(code: string): Promise<Product | null> {
+  await ensureDb();
   const trimmed = code.trim();
   if (!trimmed) return null;
-  const row = getDb()
-    .prepare(
-      `
-      SELECT * FROM products
-      WHERE UPPER(TRIM(cowag_code)) = UPPER(?)
-         OR UPPER(REPLACE(cowag_code, ' ', '')) = UPPER(REPLACE(?, ' ', ''))
-      ORDER BY LENGTH(cowag_code)
-      LIMIT 1
+  const row = await queryOne(
     `
-    )
-    .get(trimmed, trimmed);
-  return row ? rowToProduct(row as Record<string, unknown>) : null;
+    SELECT * FROM products
+    WHERE UPPER(TRIM(cowag_code)) = UPPER($1)
+       OR UPPER(REPLACE(cowag_code, ' ', '')) = UPPER(REPLACE($2, ' ', ''))
+    ORDER BY LENGTH(cowag_code)
+    LIMIT 1
+  `,
+    [trimmed, trimmed]
+  );
+  return row ? rowToProductEnriched(row) : null;
 }
 
-export function getProductBySupplierPartNumber(partNumber: string): Product | null {
+export async function getProductBySupplierPartNumber(partNumber: string): Promise<Product | null> {
+  await ensureDb();
   const trimmed = partNumber.trim();
   if (!trimmed) return null;
-  const row = getDb()
-    .prepare(
-      `
-      SELECT * FROM products
-      WHERE UPPER(TRIM(supplier_part_number)) = UPPER(?)
-      LIMIT 1
+  const row = await queryOne(
     `
-    )
-    .get(trimmed);
-  return row ? rowToProduct(row as Record<string, unknown>) : null;
+    SELECT * FROM products
+    WHERE UPPER(TRIM(supplier_part_number)) = UPPER($1)
+    LIMIT 1
+  `,
+    [trimmed]
+  );
+  return row ? rowToProductEnriched(row) : null;
 }
 
-export function saveProduct(product: Omit<Product, "id" | "lastUpdated"> & { id?: string }): Product {
-  const db = getDb();
+export async function saveProduct(
+  product: Omit<Product, "id" | "lastUpdated"> & { id?: string }
+): Promise<Product> {
+  await ensureDb();
   const id = product.id ?? uuidv4();
   const now = new Date().toISOString();
   const searchText = [
@@ -183,69 +192,63 @@ export function saveProduct(product: Omit<Product, "id" | "lastUpdated"> & { id?
     .join(" ")
     .toLowerCase();
 
-  db.prepare(`
-    INSERT INTO products (id, type, cowag_code, supplier, supplier_part_number, description, unit, sell_price, cost_each, source, last_updated, search_text)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  await query(
+    `
+    INSERT INTO products (
+      id, type, cowag_code, supplier, supplier_part_number, description,
+      unit, sell_price, cost_each, source, last_updated, search_text
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
     ON CONFLICT(id) DO UPDATE SET
-      type = excluded.type,
-      cowag_code = excluded.cowag_code,
-      supplier = excluded.supplier,
-      supplier_part_number = excluded.supplier_part_number,
-      description = excluded.description,
-      unit = excluded.unit,
-      sell_price = excluded.sell_price,
-      cost_each = excluded.cost_each,
-      source = excluded.source,
-      last_updated = excluded.last_updated,
-      search_text = excluded.search_text
-  `).run(
-    id,
-    product.type,
-    product.cowagCode ?? null,
-    product.supplier ?? null,
-    product.supplierPartNumber ?? null,
-    product.description,
-    product.unit,
-    product.sellPrice ?? null,
-    product.costEach ?? null,
-    product.source ?? null,
-    now,
-    searchText
-  );
-
-  db.prepare("DELETE FROM products_fts WHERE product_id = ?").run(id);
-  db.prepare(
-    "INSERT INTO products_fts (product_id, cowag_code, supplier_part_number, description, supplier, search_text) VALUES (?, ?, ?, ?, ?, ?)"
-  ).run(
-    id,
-    product.cowagCode ?? "",
-    product.supplierPartNumber ?? "",
-    product.description,
-    product.supplier ?? "",
-    searchText
+      type = EXCLUDED.type,
+      cowag_code = EXCLUDED.cowag_code,
+      supplier = EXCLUDED.supplier,
+      supplier_part_number = EXCLUDED.supplier_part_number,
+      description = EXCLUDED.description,
+      unit = EXCLUDED.unit,
+      sell_price = EXCLUDED.sell_price,
+      cost_each = EXCLUDED.cost_each,
+      source = EXCLUDED.source,
+      last_updated = EXCLUDED.last_updated,
+      search_text = EXCLUDED.search_text
+  `,
+    [
+      id,
+      product.type,
+      product.cowagCode ?? null,
+      product.supplier ?? null,
+      product.supplierPartNumber ?? null,
+      product.description,
+      product.unit,
+      product.sellPrice ?? null,
+      product.costEach ?? null,
+      product.source ?? null,
+      now,
+      searchText,
+    ]
   );
 
   return { ...product, id, lastUpdated: now };
 }
 
-export function searchProducts(
-  query: string,
+export async function searchProducts(
+  searchQuery: string,
   limit = 20,
   mode: "all" | "code" = "all"
-): Product[] {
-  const db = getDb();
-  const q = query.trim();
+): Promise<Product[]> {
+  await ensureDb();
+  const q = searchQuery.trim();
   if (!q) return [];
 
   const seen = new Set<string>();
   const results: Product[] = [];
 
-  const pushRows = (rows: Record<string, unknown>[]) => {
+  const pushRows = async (rows: Record<string, unknown>[]) => {
     for (const row of rows) {
       const id = row.id as string;
       if (seen.has(id)) continue;
       seen.add(id);
-      results.push(rowToProduct(row));
+      results.push(await rowToProductEnriched(row));
       if (results.length >= limit) return;
     }
   };
@@ -258,118 +261,105 @@ export function searchProducts(
   const codeLike = `%${lower}%`;
   const codePrefix = `${lower}%`;
 
-  pushRows(
-    db
-      .prepare(
+  await pushRows(
+    (
+      await query(
         `
         SELECT * FROM products
-        WHERE UPPER(cowag_code) = ?
-           OR UPPER(supplier_part_number) = ?
-           OR UPPER(REPLACE(cowag_code, ' ', '')) = ?
-        LIMIT ?
-      `
+        WHERE UPPER(cowag_code) = $1
+           OR UPPER(supplier_part_number) = $2
+           OR UPPER(REPLACE(cowag_code, ' ', '')) = $3
+        LIMIT $4
+      `,
+        [upper, upper, upper, limit]
       )
-      .all(upper, upper, upper, limit) as Record<string, unknown>[]
+    ).rows
   );
   if (results.length >= limit) return results;
 
-  pushRows(
-    db
-      .prepare(
+  await pushRows(
+    (
+      await query(
         `
         SELECT * FROM products
-        WHERE LOWER(cowag_code) LIKE ?
-           OR LOWER(supplier_part_number) LIKE ?
+        WHERE LOWER(cowag_code) LIKE $1
+           OR LOWER(supplier_part_number) LIKE $2
         ORDER BY LENGTH(cowag_code), cowag_code
-        LIMIT ?
-      `
+        LIMIT $3
+      `,
+        [codePrefix, codePrefix, limit]
       )
-      .all(codePrefix, codePrefix, limit) as Record<string, unknown>[]
+    ).rows
   );
   if (results.length >= limit) return results;
 
-  pushRows(
-    db
-      .prepare(
+  await pushRows(
+    (
+      await query(
         `
         SELECT * FROM products
-        WHERE LOWER(cowag_code) LIKE ?
-           OR LOWER(supplier_part_number) LIKE ?
+        WHERE LOWER(cowag_code) LIKE $1
+           OR LOWER(supplier_part_number) LIKE $2
         ORDER BY
-          CASE WHEN LOWER(cowag_code) LIKE ? THEN 0 ELSE 1 END,
+          CASE WHEN LOWER(cowag_code) LIKE $3 THEN 0 ELSE 1 END,
           LENGTH(cowag_code),
           cowag_code
-        LIMIT ?
-      `
+        LIMIT $4
+      `,
+        [codeLike, codeLike, codePrefix, limit]
       )
-      .all(codeLike, codeLike, codePrefix, limit) as Record<string, unknown>[]
+    ).rows
   );
   if (results.length >= limit || mode === "code") return results;
 
-  const tokens = lowerRaw.split(/\s+/).filter(Boolean);
-  const ftsQuery = tokens.map((t) => `"${t}"*`).join(" ");
-
-  try {
-    pushRows(
-      db
-        .prepare(
-          `
-          SELECT p.* FROM products_fts fts
-          JOIN products p ON p.id = fts.product_id
-          WHERE products_fts MATCH ?
-          ORDER BY rank
-          LIMIT ?
-        `
-        )
-        .all(ftsQuery, limit) as Record<string, unknown>[]
-    );
-  } catch {
-    // FTS unavailable — fall through to LIKE search below.
-  }
-
   if (results.length < limit) {
-    pushRows(
-      db
-        .prepare(
+    await pushRows(
+      (
+        await query(
           `
           SELECT * FROM products
-          WHERE LOWER(description) LIKE ?
-             OR LOWER(cowag_code) LIKE ?
-             OR LOWER(supplier_part_number) LIKE ?
-             OR LOWER(search_text) LIKE ?
+          WHERE description ILIKE $1
+             OR cowag_code ILIKE $1
+             OR supplier_part_number ILIKE $1
+             OR search_text ILIKE $1
           ORDER BY description
-          LIMIT ?
-        `
+          LIMIT $2
+        `,
+          [like, limit]
         )
-        .all(like, like, like, like, limit) as Record<string, unknown>[]
+      ).rows
     );
   }
 
   return results;
 }
 
-export function clearProducts() {
-  const db = getDb();
-  db.exec("DELETE FROM products");
-  rebuildProductFts(db);
+export async function clearProducts() {
+  await ensureDb();
+  await query("DELETE FROM products");
 }
 
-export function listProducts(limit = 100, offset = 0): Product[] {
-  const rows = getDb()
-    .prepare("SELECT * FROM products ORDER BY description LIMIT ? OFFSET ?")
-    .all(limit, offset);
-  return rows.map((r) => rowToProduct(r as Record<string, unknown>));
+export async function listProducts(limit = 100, offset = 0): Promise<Product[]> {
+  await ensureDb();
+  const { rows } = await query("SELECT * FROM products ORDER BY description LIMIT $1 OFFSET $2", [
+    limit,
+    offset,
+  ]);
+  return Promise.all(rows.map((r) => rowToProductEnriched(r)));
 }
 
-export function countProducts(): number {
-  const row = getDb().prepare("SELECT COUNT(*) as c FROM products").get() as { c: number };
-  return row.c;
+export async function countProducts(): Promise<number> {
+  await ensureDb();
+  const row = await queryOne("SELECT COUNT(*)::int AS c FROM products");
+  return (row?.c as number) ?? 0;
 }
 
-export function getPriceListMeta() {
-  return getDb().prepare("SELECT * FROM price_list_meta ORDER BY last_updated DESC LIMIT 1").get() as
+export async function getPriceListMeta() {
+  await ensureDb();
+  return queryOne("SELECT * FROM price_list_meta ORDER BY last_updated DESC LIMIT 1") as Promise<
     | { id: string; source_file: string; last_updated: string; product_count: number }
-    | undefined;
+    | null
+  >;
 }
 
 export interface PriceImportSummary {
@@ -379,7 +369,7 @@ export interface PriceImportSummary {
   notFound: number;
 }
 
-export function importCowagProducts(
+export async function importCowagProducts(
   items: Array<{
     cowagCode: string;
     description: string;
@@ -388,20 +378,19 @@ export function importCowagProducts(
     source: string;
   }>,
   sourceFile: string
-): PriceImportSummary {
-  const db = getDb();
+): Promise<PriceImportSummary> {
+  await ensureDb();
   const summary: PriceImportSummary = { matched: 0, pricesChanged: 0, newProducts: 0, notFound: 0 };
   const now = new Date().toISOString();
 
-  const findByCode = db.prepare("SELECT * FROM products WHERE cowag_code = ?");
-  const tx = db.transaction(() => {
+  await withTransaction(async () => {
     for (const item of items) {
-      const existing = findByCode.get(item.cowagCode) as Record<string, unknown> | undefined;
+      const existing = await queryOne("SELECT * FROM products WHERE cowag_code = $1", [item.cowagCode]);
       if (existing) {
         summary.matched++;
         const oldPrice = existing.sell_price as number | null;
         if (oldPrice !== item.sellPrice) summary.pricesChanged++;
-        saveProduct({
+        await saveProduct({
           id: existing.id as string,
           type: "cowag",
           cowagCode: item.cowagCode,
@@ -413,7 +402,7 @@ export function importCowagProducts(
         });
       } else {
         summary.newProducts++;
-        saveProduct({
+        await saveProduct({
           type: "cowag",
           cowagCode: item.cowagCode,
           description: item.description,
@@ -424,20 +413,20 @@ export function importCowagProducts(
       }
     }
 
-    db.prepare("INSERT INTO price_list_meta (id, source_file, last_updated, product_count) VALUES (?, ?, ?, ?)").run(
-      uuidv4(),
-      sourceFile,
-      now,
-      countProducts()
+    const total = await countProducts();
+    await query(
+      "INSERT INTO price_list_meta (id, source_file, last_updated, product_count) VALUES ($1, $2, $3, $4)",
+      [uuidv4(), sourceFile, now, total]
     );
   });
-  tx();
-  rebuildProductFts();
+
   return summary;
 }
 
-export function listScopeClauses() {
-  return getDb().prepare("SELECT * FROM scope_clauses ORDER BY category, title").all() as Array<{
+export async function listScopeClauses() {
+  await ensureDb();
+  const { rows } = await query("SELECT * FROM scope_clauses ORDER BY category, title");
+  return rows as Array<{
     id: string;
     title: string;
     text: string;
@@ -445,39 +434,41 @@ export function listScopeClauses() {
   }>;
 }
 
-export function listTemplates(kind?: string) {
-  const db = getDb();
-  const rows = kind
-    ? db.prepare("SELECT * FROM templates WHERE kind = ? ORDER BY name").all(kind)
-    : db.prepare("SELECT * FROM templates ORDER BY kind, name").all();
-  return rows.map((r) => {
-    const row = r as Record<string, unknown>;
-    return {
-      id: row.id as string,
-      name: row.name as string,
-      kind: row.kind as string,
-      description: (row.description as string) || undefined,
-      payload: JSON.parse(row.payload_json as string),
-      createdAt: row.created_at as string,
-    };
-  });
+export async function listTemplates(kind?: string) {
+  await ensureDb();
+  const { rows } = kind
+    ? await query("SELECT * FROM templates WHERE kind = $1 ORDER BY name", [kind])
+    : await query("SELECT * FROM templates ORDER BY kind, name");
+  return rows.map((row) => ({
+    id: row.id as string,
+    name: row.name as string,
+    kind: row.kind as string,
+    description: (row.description as string) || undefined,
+    payload: JSON.parse(row.payload_json as string),
+    createdAt: row.created_at as string,
+  }));
 }
 
-export function saveTemplate(template: {
+export async function saveTemplate(template: {
   id?: string;
   name: string;
   kind: string;
   description?: string;
   payload: unknown;
 }) {
+  await ensureDb();
   const id = template.id ?? uuidv4();
   const now = new Date().toISOString();
-  getDb()
-    .prepare(`
-      INSERT INTO templates (id, name, kind, description, payload_json, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET name = excluded.name, description = excluded.description, payload_json = excluded.payload_json
-    `)
-    .run(id, template.name, template.kind, template.description ?? null, JSON.stringify(template.payload), now);
+  await query(
+    `
+    INSERT INTO templates (id, name, kind, description, payload_json, created_at)
+    VALUES ($1, $2, $3, $4, $5, $6)
+    ON CONFLICT(id) DO UPDATE SET
+      name = EXCLUDED.name,
+      description = EXCLUDED.description,
+      payload_json = EXCLUDED.payload_json
+  `,
+    [id, template.name, template.kind, template.description ?? null, JSON.stringify(template.payload), now]
+  );
   return id;
 }

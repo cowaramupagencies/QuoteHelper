@@ -46,24 +46,24 @@ function stringsEqual(a?: string | null, b?: string | null): boolean {
   return (a ?? "").trim() === (b ?? "").trim();
 }
 
-export function resolveProductForBomItem(item: BomItem): Product | null {
+export async function resolveProductForBomItem(item: BomItem): Promise<Product | null> {
   if (item.productId) {
-    const byId = getProduct(item.productId);
+    const byId = await getProduct(item.productId);
     if (byId) return byId;
   }
   if (item.cowagPartNumber?.trim()) {
-    const byCode = getProductByCowagCode(item.cowagPartNumber);
+    const byCode = await getProductByCowagCode(item.cowagPartNumber);
     if (byCode) return byCode;
   }
   if (item.supplierPartNumber?.trim()) {
-    const bySupplier = getProductBySupplierPartNumber(item.supplierPartNumber);
+    const bySupplier = await getProductBySupplierPartNumber(item.supplierPartNumber);
     if (bySupplier) return bySupplier;
   }
   return null;
 }
 
-function resolveCatalogueDataForItem(item: BomItem, product: Product | null) {
-  const tencia = getActiveTenciaImportMatch(item.cowagPartNumber, item.supplierPartNumber);
+async function resolveCatalogueDataForItem(item: BomItem, product: Product | null) {
+  const tencia = await getActiveTenciaImportMatch(item.cowagPartNumber, item.supplierPartNumber);
 
   return {
     costEach: product?.costEach ?? tencia?.costEach ?? null,
@@ -73,13 +73,13 @@ function resolveCatalogueDataForItem(item: BomItem, product: Product | null) {
   };
 }
 
-export function proposeUpdatedBomItem(item: BomItem): BomItem | null {
+export async function proposeUpdatedBomItem(item: BomItem): Promise<BomItem | null> {
   if (item.pricingState === "poa") {
     return null;
   }
 
-  const product = resolveProductForBomItem(item);
-  const catalogue = resolveCatalogueDataForItem(item, product);
+  const product = await resolveProductForBomItem(item);
+  const catalogue = await resolveCatalogueDataForItem(item, product);
 
   if (
     catalogue.costEach == null &&
@@ -141,7 +141,7 @@ function describeItemContext(
   };
 }
 
-export function previewQuotePriceRefresh(quote: Quote): QuotePriceRefreshPreview {
+export async function previewQuotePriceRefresh(quote: Quote): Promise<QuotePriceRefreshPreview> {
   const changes: QuotePriceRefreshChange[] = [];
 
   for (const option of quote.options) {
@@ -164,8 +164,8 @@ export function previewQuotePriceRefresh(quote: Quote): QuotePriceRefreshPreview
           continue;
         }
 
-        const product = resolveProductForBomItem(item);
-        const catalogue = resolveCatalogueDataForItem(item, product);
+        const product = await resolveProductForBomItem(item);
+        const catalogue = await resolveCatalogueDataForItem(item, product);
 
         if (
           catalogue.costEach == null &&
@@ -186,7 +186,7 @@ export function previewQuotePriceRefresh(quote: Quote): QuotePriceRefreshPreview
           continue;
         }
 
-        const proposed = proposeUpdatedBomItem(item);
+        const proposed = await proposeUpdatedBomItem(item);
         if (!proposed) {
           changes.push({
             itemId: item.id,
@@ -226,14 +226,24 @@ export function previewQuotePriceRefresh(quote: Quote): QuotePriceRefreshPreview
   };
 }
 
-export function applyQuotePriceRefresh(quote: Quote): Quote {
+export async function applyQuotePriceRefresh(quote: Quote): Promise<Quote> {
   const updateIds = new Set(
-    previewQuotePriceRefresh(quote)
+    (await previewQuotePriceRefresh(quote))
       .changes.filter((c) => c.status === "would_update")
       .map((c) => c.itemId)
   );
 
   if (updateIds.size === 0) return quote;
+
+  const updatedItems = await Promise.all(
+    quote.options.flatMap((option) =>
+      option.sections.flatMap((section) => section.items)
+    ).map(async (item) => {
+      if (!updateIds.has(item.id)) return { itemId: item.id, item };
+      return { itemId: item.id, item: (await proposeUpdatedBomItem(item)) ?? item };
+    })
+  );
+  const itemMap = new Map(updatedItems.map(({ itemId, item }) => [itemId, item]));
 
   return {
     ...quote,
@@ -241,10 +251,7 @@ export function applyQuotePriceRefresh(quote: Quote): Quote {
       ...option,
       sections: option.sections.map((section) => ({
         ...section,
-        items: section.items.map((item) => {
-          if (!updateIds.has(item.id)) return item;
-          return proposeUpdatedBomItem(item) ?? item;
-        }),
+        items: section.items.map((item) => itemMap.get(item.id) ?? item),
       })),
     })),
   };
