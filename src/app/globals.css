@@ -1,0 +1,329 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    @apply border-border;
+  }
+
+  html {
+    @apply antialiased;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    @apply bg-page text-ink font-sans;
+  }
+
+  a {
+    @apply text-inherit no-underline;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-brand ring-offset-2 ring-offset-page;
+  }
+}
+
+@layer components {
+  .app-container {
+    @apply mx-auto w-full max-w-app px-4 sm:px-6 lg:px-8;
+  }
+
+  .surface-card {
+    @apply rounded-2xl border border-border bg-surface shadow-card;
+  }
+
+  .surface-card-interactive {
+    @apply surface-card transition-all duration-150;
+    @apply hover:border-brand/25 hover:shadow-card-hover hover:bg-brand-soft/30;
+    @apply active:scale-[0.995] active:shadow-card;
+  }
+
+  .btn-base {
+    @apply inline-flex items-center justify-center gap-2 rounded-2xl px-5 py-3;
+    @apply text-base font-medium leading-none transition-colors duration-150;
+    @apply min-h-[3rem] disabled:pointer-events-none disabled:opacity-50;
+  }
+
+  .btn-primary {
+    @apply btn-base bg-brand text-white;
+    @apply hover:bg-brand-hover focus-visible:ring-brand;
+    @apply active:bg-brand-dark;
+  }
+
+  .btn-secondary {
+    @apply btn-base border border-border bg-surface text-ink;
+    @apply hover:border-brand/30 hover:bg-brand-soft;
+  }
+
+  .btn-ghost {
+    @apply btn-base bg-transparent text-ink-secondary;
+    @apply hover:bg-brand-soft hover:text-ink;
+  }
+
+  .input-field {
+    @apply w-full rounded-2xl border border-border bg-surface px-4 py-3;
+    @apply text-base text-ink placeholder:text-ink-secondary;
+    @apply min-h-[3rem] transition-colors duration-150;
+    @apply focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20;
+  }
+
+  .field-label {
+    @apply mb-1.5 block text-sm font-medium text-ink-secondary;
+  }
+
+  .page-title {
+    @apply text-2xl font-semibold tracking-tight text-ink sm:text-3xl;
+  }
+
+  .page-subtitle {
+    @apply mt-2 max-w-2xl text-base leading-relaxed text-ink-secondary;
+  }
+
+  .section-title {
+    @apply text-lg font-semibold text-ink;
+  }
+
+  .meta-text {
+    @apply text-sm text-ink-secondary;
+  }
+
+  .nav-link {
+    @apply rounded-xl px-3.5 py-2 text-sm font-medium text-ink-secondary transition-colors duration-150;
+    @apply hover:bg-brand-soft hover:text-brand-dark;
+  }
+
+  .nav-link-active {
+    @apply bg-brand-light text-brand-dark;
+  }
+
+  .tab-btn {
+    @apply min-h-[3rem] rounded-2xl px-5 py-3 text-base font-medium transition-colors duration-150;
+  }
+
+  .tab-btn-active {
+    @apply bg-brand-light text-brand-dark;
+  }
+
+  .tab-btn-inactive {
+    @apply text-ink-secondary hover:bg-brand-soft/70;
+  }
+
+  /* Legacy aliases — quote builder pages (updated incrementally) */
+  .card {
+    @apply surface-card;
+  }
+
+  .input {
+    @apply input-field;
+  }
+
+  .label {
+    @apply field-label;
+  }
+
+  .tab {
+    @apply tab-btn;
+  }
+
+  .tab-active {
+    @apply tab-btn-active;
+  }
+
+  .tab-inactive {
+    @apply tab-btn-inactive;
+  }
+
+  .bom-sheet-wrap {
+    @apply rounded-2xl border border-border bg-surface;
+  }
+
+  .bom-sheet-scroll {
+    @apply overflow-x-auto;
+    padding-bottom: 14rem;
+  }
+
+  body.bom-search-active .bom-sheet-scroll {
+    padding-bottom: 24rem;
+  }
+
+  body.bom-search-active main {
+    padding-bottom: 8rem;
+  }
+
+  .catalogue-search-dropdown {
+    overscroll-behavior: contain;
+  }
+
+  .catalogue-search-option {
+    min-height: 3.5rem;
+  }
+
+  .bom-sheet {
+    @apply w-full border-collapse text-sm;
+    min-width: 1920px;
+  }
+
+  .bom-meta-grid {
+    @apply text-sm;
+  }
+
+  .bom-meta-row {
+    @apply flex flex-wrap items-center gap-2;
+  }
+
+  .bom-meta-label {
+    @apply text-xs font-semibold uppercase tracking-wide text-ink-secondary w-24 shrink-0;
+  }
+
+  .bom-meta-input {
+    @apply rounded-lg border border-border bg-surface px-3 py-1.5 text-sm min-w-[8rem];
+    @apply focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/15;
+  }
+
+  .bom-sheet thead th {
+    @apply sticky top-0 z-20 border-b-2 border-ink/10 bg-ink px-2 py-2.5 text-left text-[11px] font-bold uppercase tracking-wide text-white;
+  }
+
+  .bom-sheet tbody td {
+    @apply border-b border-border/80 px-1 py-0.5 align-middle;
+  }
+  .bom-col-subassy { width: 7.5rem; min-width: 7.5rem; }
+  .bom-col-cc { width: 2.5rem; min-width: 2.5rem; }
+  .bom-col-supplier { width: 6.5rem; min-width: 6.5rem; }
+  .bom-col-supplier-pt { width: 6.5rem; min-width: 6.5rem; }
+  .bom-col-cowag { width: 6.5rem; min-width: 6.5rem; overflow: visible; }
+  .bom-col-description { width: 16rem; min-width: 16rem; overflow: visible; }
+  .bom-col-qty { width: 3rem; min-width: 3rem; max-width: 3rem; }
+  .bom-col-money { width: 4.5rem; min-width: 4.5rem; max-width: 4.5rem; }
+  .bom-col-pct { width: 3.5rem; min-width: 3.5rem; max-width: 3.5rem; }
+  .bom-col-notes { width: 8rem; min-width: 8rem; }
+  .bom-col-state { width: 5.5rem; min-width: 5.5rem; }
+  .bom-col-actions { width: 4.5rem; min-width: 4.5rem; }
+
+  .bom-row-option td {
+    @apply bg-ink text-white border-ink;
+  }
+
+  .bom-row-section td {
+    @apply bg-brand text-white border-brand;
+  }
+
+  .bom-row-total td {
+    @apply border-t-2 border-brand/50 bg-brand-soft px-2 py-3 text-sm font-semibold text-brand-dark;
+  }
+
+  .bom-row-total .bom-total-label {
+    @apply text-xs font-bold uppercase tracking-wider text-brand-dark/90;
+  }
+
+  .bom-row-total .bom-total-stat {
+    @apply text-right tabular-nums text-sm font-bold text-ink;
+  }
+
+  .bom-row-option-gap td {
+    @apply border-0 bg-surface p-0;
+    height: 1.5rem;
+  }
+
+  .bom-row-add-actions td {
+    @apply bg-brand-soft/30 border-b border-border;
+  }
+
+  .bom-add-item-btn {
+    @apply inline-flex items-center gap-1.5 rounded-lg border border-brand/30 bg-brand-soft/50 px-3 py-1.5 text-xs font-medium text-brand;
+    @apply transition-colors hover:bg-brand-soft hover:border-brand/50;
+  }
+
+  .bom-add-item-btn-secondary {
+    @apply border-border bg-surface text-ink-secondary;
+    @apply hover:bg-brand-soft/30 hover:text-ink hover:border-brand/20;
+  }
+
+  .bom-row-item:hover td {
+    @apply bg-brand-soft/15;
+  }
+
+  .bom-row-active td {
+    @apply bg-brand-soft/30;
+  }
+
+  .bom-header-stat {
+    @apply text-right tabular-nums font-semibold;
+  }
+
+  .bom-subassy-label {
+    @apply block truncate px-1 text-xs text-ink-secondary;
+  }
+
+  .bom-empty-cell {
+    @apply block min-h-[1.75rem];
+  }
+
+  .bom-cell-input {
+    @apply w-full min-w-0 rounded-md border border-transparent bg-transparent px-1 py-1 text-sm text-ink;
+    @apply focus:border-brand/40 focus:bg-surface focus:outline-none focus:ring-1 focus:ring-brand/20;
+  }
+
+  .bom-col-cowag .bom-cell-input {
+    @apply font-mono text-xs;
+  }
+
+  .bom-cell-number {
+    @apply bom-cell-input text-right tabular-nums px-0.5;
+    width: 100%;
+    max-width: 4.25rem;
+  }
+
+  .bom-header-input {
+    @apply rounded-md border border-white/25 bg-white/10 px-2 py-1 text-sm font-semibold text-white placeholder:text-white/60;
+    @apply focus:border-white/50 focus:outline-none focus:ring-1 focus:ring-white/25;
+  }
+
+  .bom-readonly {
+    @apply px-1 text-ink-secondary tabular-nums text-sm;
+  }
+
+  .bom-icon-btn {
+    @apply inline-flex items-center justify-center rounded-md p-1 text-ink-secondary transition-colors;
+    @apply hover:bg-black/5 hover:text-ink;
+  }
+
+  .bom-row-option .bom-icon-btn,
+  .bom-row-section .bom-icon-btn {
+    @apply text-white/80 hover:bg-white/10 hover:text-white;
+  }
+
+  .quote-sheet-wrap {
+    @apply rounded-2xl border border-border bg-surface overflow-hidden;
+  }
+
+  .quote-sheet-scroll {
+    @apply overflow-x-auto;
+  }
+
+  .quote-pricing-table {
+    min-width: 640px;
+  }
+
+  .quote-pricing-table th,
+  .quote-pricing-table td {
+    @apply border-b border-border px-4 py-2.5 text-sm;
+  }
+
+  .quote-row-option th {
+    @apply bg-ink text-white font-semibold;
+  }
+
+  .quote-row-line td {
+    @apply bg-surface;
+  }
+
+  .quote-row-total td {
+    @apply bg-brand-soft/50;
+  }
+}
