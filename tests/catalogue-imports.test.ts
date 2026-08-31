@@ -8,10 +8,12 @@ import {
   getImportBatch,
   importCatalogueCsv,
   listImportBatchesForCategory,
+  searchActiveCatalogueImports,
 } from "@/lib/db/catalogue-imports";
 import { query, queryOne } from "@/lib/db/client";
 import { parseCatalogueCsv, extractMappedFieldsFromRaw } from "@/lib/catalogue/csv-parser";
 import { previewCatalogueImport } from "@/lib/catalogue/import-preview";
+import { searchProducts } from "@/lib/db/repository";
 import { setupTestDb, teardownTestDb } from "./test-db";
 
 const PUMPS_CSV_V1 = `Code,Description,Last Cost,Unit
@@ -349,5 +351,33 @@ PUMP-001,Test Pump,123.45,VINIDE,GRU-12345`;
     const match = await getActiveTenciaImportMatch("PUMP-001", null);
     expect(match?.supplier).toBe("VINIDE");
     expect(match?.supplierPartNumber).toBe("GRU-12345");
+  });
+
+  it("includes active catalogue imports in product search", async () => {
+    const batch = await importCatalogueCsv({
+      categoryId: "pumps",
+      originalFilename: "pumps.csv",
+      csvText: PUMPS_CSV_V1,
+    });
+    await activateImportBatch(batch.id);
+
+    const catalogueOnly = await searchActiveCatalogueImports("pump-001", 5, "code");
+    expect(catalogueOnly).toHaveLength(1);
+    expect(catalogueOnly[0].cowagCode).toBe("PUMP-001");
+
+    const merged = await searchProducts("pump-001", 5, "code");
+    expect(merged.some((p) => p.cowagCode === "PUMP-001")).toBe(true);
+    expect(merged[0].costEach).toBe(100);
+  });
+
+  it("does not search catalogue rows until the import batch is activated", async () => {
+    await importCatalogueCsv({
+      categoryId: "pumps",
+      originalFilename: "pumps.csv",
+      csvText: PUMPS_CSV_V1,
+    });
+
+    const rows = await searchActiveCatalogueImports("PUMP-001", 5, "code");
+    expect(rows).toHaveLength(0);
   });
 });

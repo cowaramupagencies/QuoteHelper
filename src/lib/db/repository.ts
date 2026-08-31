@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from "uuid";
 import { ensureDb, query, queryOne, withTransaction } from "@/lib/db/client";
-import { getActiveTenciaImportMatch } from "@/lib/db/catalogue-imports";
+import { getActiveTenciaImportMatch, searchActiveCatalogueImports } from "@/lib/db/catalogue-imports";
+import type { CatalogueImportRow } from "@/types/catalogue-imports";
 import type { Product, Quote } from "@/types";
 
 function rowToQuote(row: Record<string, unknown>): Quote {
@@ -231,6 +232,33 @@ export async function saveProduct(
   return { ...product, id, lastUpdated: now };
 }
 
+function productMatchKey(product: {
+  cowagCode?: string | null;
+  supplierPartNumber?: string | null;
+}): string | null {
+  if (product.cowagCode?.trim()) return `cowag:${product.cowagCode.trim().toUpperCase()}`;
+  if (product.supplierPartNumber?.trim()) {
+    return `spn:${product.supplierPartNumber.trim().toUpperCase()}`;
+  }
+  return null;
+}
+
+function catalogueImportRowToProduct(row: CatalogueImportRow): Product {
+  return {
+    id: row.id,
+    type: row.cowagCode ? "cowag" : "supplier",
+    cowagCode: row.cowagCode ?? undefined,
+    supplier: row.supplier ?? undefined,
+    supplierPartNumber: row.supplierPartNumber ?? undefined,
+    description: row.description,
+    unit: row.unit,
+    sellPrice: row.sellPrice,
+    costEach: row.costEach,
+    source: "Tencia (active import)",
+    lastUpdated: new Date().toISOString(),
+  };
+}
+
 export async function searchProducts(
   searchQuery: string,
   limit = 20,
@@ -240,15 +268,36 @@ export async function searchProducts(
   const q = searchQuery.trim();
   if (!q) return [];
 
-  const seen = new Set<string>();
+  const seenIds = new Set<string>();
+  const seenKeys = new Set<string>();
   const results: Product[] = [];
 
-  const pushRows = async (rows: Record<string, unknown>[]) => {
+  const pushProductRows = async (rows: Record<string, unknown>[]) => {
     for (const row of rows) {
       const id = row.id as string;
-      if (seen.has(id)) continue;
-      seen.add(id);
-      results.push(await rowToProductEnriched(row));
+      if (seenIds.has(id)) continue;
+
+      const product = await rowToProductEnriched(row);
+      const key = productMatchKey(product);
+      if (key && seenKeys.has(key)) continue;
+
+      seenIds.add(id);
+      if (key) seenKeys.add(key);
+      results.push(product);
+      if (results.length >= limit) return;
+    }
+  };
+
+  const pushCatalogueRows = (rows: CatalogueImportRow[]) => {
+    for (const row of rows) {
+      if (seenIds.has(row.id)) continue;
+
+      const key = productMatchKey(row);
+      if (key && seenKeys.has(key)) continue;
+
+      seenIds.add(row.id);
+      if (key) seenKeys.add(key);
+      results.push(catalogueImportRowToProduct(row));
       if (results.length >= limit) return;
     }
   };
@@ -261,7 +310,7 @@ export async function searchProducts(
   const codeLike = `%${lower}%`;
   const codePrefix = `${lower}%`;
 
-  await pushRows(
+  await pushProductRows(
     (
       await query(
         `
@@ -277,7 +326,7 @@ export async function searchProducts(
   );
   if (results.length >= limit) return results;
 
-  await pushRows(
+  await pushProductRows(
     (
       await query(
         `
@@ -293,7 +342,7 @@ export async function searchProducts(
   );
   if (results.length >= limit) return results;
 
-  await pushRows(
+  await pushProductRows(
     (
       await query(
         `
@@ -310,10 +359,15 @@ export async function searchProducts(
       )
     ).rows
   );
+  if (results.length >= limit) return results;
+
+  if (results.length < limit) {
+    pushCatalogueRows(await searchActiveCatalogueImports(q, limit, mode));
+  }
   if (results.length >= limit || mode === "code") return results;
 
   if (results.length < limit) {
-    await pushRows(
+    await pushProductRows(
       (
         await query(
           `

@@ -10,6 +10,11 @@ import type {
   CatalogueImportSummary,
 } from "@/types/catalogue-imports";
 
+const ACTIVE_IMPORT_FROM = `
+  FROM catalogue_import_rows r
+  JOIN catalogue_category_active a ON a.batch_id = r.batch_id
+`;
+
 function parseSummary(raw: string | null | undefined): CatalogueImportSummary {
   if (!raw) {
     return {
@@ -347,6 +352,124 @@ export async function getActiveTenciaCostForCode(
   const match = await getActiveTenciaImportMatch(cowagCode, null);
   if (match?.costEach == null) return null;
   return Number(match.costEach);
+}
+
+/** Search live Tencia catalogue imports (active batch per category). */
+export async function searchActiveCatalogueImports(
+  searchQuery: string,
+  limit = 20,
+  mode: "all" | "code" = "all"
+): Promise<CatalogueImportRow[]> {
+  await ensureDb();
+  const q = searchQuery.trim();
+  if (!q) return [];
+
+  const seen = new Set<string>();
+  const results: CatalogueImportRow[] = [];
+
+  const pushRows = (rows: Record<string, unknown>[]) => {
+    for (const row of rows) {
+      const id = row.id as string;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      results.push(resolveImportRow(row));
+      if (results.length >= limit) return true;
+    }
+    return false;
+  };
+
+  const compact = q.replace(/\s+/g, "");
+  const upper = compact.toUpperCase();
+  const lower = compact.toLowerCase();
+  const lowerRaw = q.toLowerCase();
+  const like = `%${lowerRaw}%`;
+  const codeLike = `%${lower}%`;
+  const codePrefix = `${lower}%`;
+
+  if (
+    pushRows(
+      (
+        await query(
+          `
+        SELECT r.*
+        ${ACTIVE_IMPORT_FROM}
+        WHERE UPPER(r.cowag_code) = $1
+           OR UPPER(r.supplier_part_number) = $2
+           OR UPPER(REPLACE(r.cowag_code, ' ', '')) = $3
+        LIMIT $4
+      `,
+          [upper, upper, upper, limit]
+        )
+      ).rows
+    )
+  ) {
+    return results;
+  }
+
+  if (
+    pushRows(
+      (
+        await query(
+          `
+        SELECT r.*
+        ${ACTIVE_IMPORT_FROM}
+        WHERE LOWER(r.cowag_code) LIKE $1
+           OR LOWER(r.supplier_part_number) LIKE $2
+        ORDER BY LENGTH(r.cowag_code), r.cowag_code
+        LIMIT $3
+      `,
+          [codePrefix, codePrefix, limit]
+        )
+      ).rows
+    )
+  ) {
+    return results;
+  }
+
+  if (
+    pushRows(
+      (
+        await query(
+          `
+        SELECT r.*
+        ${ACTIVE_IMPORT_FROM}
+        WHERE LOWER(r.cowag_code) LIKE $1
+           OR LOWER(r.supplier_part_number) LIKE $2
+        ORDER BY
+          CASE WHEN LOWER(r.cowag_code) LIKE $3 THEN 0 ELSE 1 END,
+          LENGTH(r.cowag_code),
+          r.cowag_code
+        LIMIT $4
+      `,
+          [codeLike, codeLike, codePrefix, limit]
+        )
+      ).rows
+    )
+  ) {
+    return results;
+  }
+
+  if (mode === "code") return results;
+
+  pushRows(
+    (
+      await query(
+        `
+        SELECT r.*
+        ${ACTIVE_IMPORT_FROM}
+        WHERE r.description ILIKE $1
+           OR r.cowag_code ILIKE $1
+           OR r.supplier_part_number ILIKE $1
+           OR r.search_text ILIKE $1
+        ORDER BY r.description
+        LIMIT $2
+      `,
+        [like, limit]
+      )
+    ).rows
+  );
+
+  return results;
 }
 
 export async function getAdminCatalogueImportsOverview() {
